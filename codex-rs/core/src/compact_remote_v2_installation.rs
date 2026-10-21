@@ -163,11 +163,12 @@ async fn build_and_install_compaction(
                     fallback_turn_context.model_info().slug.as_str(),
                     compaction_metadata.reason(),
                     compaction_metadata.implementation(),
+                    &error,
                     fallback_result.as_ref().err(),
                 );
                 match fallback_result {
                     Ok(attempt) => (attempt, fallback_turn_context),
-                    Err(_) => return Err(error),
+                    Err(fallback_error) => return Err(fallback_error),
                 }
             }
         };
