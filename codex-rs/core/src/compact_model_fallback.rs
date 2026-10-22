@@ -3,9 +3,9 @@ use codex_analytics::CompactionImplementation;
 use codex_analytics::CompactionReason;
 use codex_otel::SessionTelemetry;
 use codex_protocol::error::CodexErr;
+use codex_protocol::error::CodexErrKind;
 use codex_protocol::error::CodexErrorDetails;
 use tracing::warn;
-
 /// Returns whether a failed compaction attempt should use the current model.
 pub(crate) fn should_retry_with_current_model(
     error: &CodexErr,
@@ -38,6 +38,7 @@ pub(crate) fn record_model_fallback(
     current_model: &str,
     reason: CompactionReason,
     implementation: CompactionImplementation,
+    previous_error: &CodexErr,
     fallback_error: Option<&CodexErr>,
 ) {
     let reason_tag = match reason {
@@ -70,6 +71,7 @@ pub(crate) fn record_model_fallback(
         ?reason,
         ?implementation,
         outcome,
+        previous_error_kind = ?CodexErrKind::from(previous_error),
         ?fallback_error,
         "previous-model compaction failed; retried with current model"
     );

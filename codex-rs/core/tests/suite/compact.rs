@@ -3375,11 +3375,19 @@ async fn pre_sampling_compact_falls_back_after_previous_model_stream_retries_are
 
 /// Both compaction models keep the configured retry budget when the server supplies advice,
 /// including the selected model's final attempt.
-#[test_case::test_case(2; "selected_model_recovers")]
-#[test_case::test_case(3; "selected_model_exhausts_retries")]
+
+/// The selected model should report its own error if all fallback attempts fail.
+#[test_case::test_case(2, false; "selected_model_recovers")]
+#[test_case::test_case(3, false; "selected_model_exhausts_retries")]
+#[test_case::test_case(
+    3,
+    true;
+    "unsupported_previous_model_then_selected_model_exhausts_retries"
+)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pre_sampling_compact_advised_errors_fall_back_then_retry_on_selected_model(
     selected_model_failures: usize,
+    unsupported_previous_model: bool,
 ) {
     skip_if_no_network!();
 
@@ -3399,15 +3407,19 @@ async fn pre_sampling_compact_advised_errors_fall_back_then_retry_on_selected_mo
     let overload = wiremock::ResponseTemplate::new(/*s*/ 503)
         .insert_header("Retry-After", "0")
         .set_body_json(json!({ "error": { "code": "server_is_overloaded" } }));
-    let mut responses = vec![
-        sse_response(sse(vec![
-            ev_assistant_message("m1", "before switch"),
-            ev_completed_with_tokens("r1", /*total_tokens*/ 120_000),
-        ])),
-        overload.clone(), // Old model: initial attempt and two retries.
-        overload.clone(),
-        overload.clone(),
-    ];
+    let mut responses = vec![sse_response(sse(vec![
+        ev_assistant_message("m1", "before switch"),
+        ev_completed_with_tokens("r1", /*total_tokens*/ 120_000),
+    ]))];
+
+    if unsupported_previous_model {
+        responses.push(invalid_request_response(format!(
+            "The '{previous_model}' model is not supported when using Codex with a ChatGPT account."
+        )));
+    } else {
+        responses.extend(vec![overload.clone(); 3]);
+    }
+
     responses.extend(vec![overload; selected_model_failures]);
     if selected_model_failures < 3 {
         responses.extend([
@@ -3481,15 +3493,15 @@ async fn pre_sampling_compact_advised_errors_fall_back_then_retry_on_selected_mo
                 .to_string()
         })
         .collect::<Vec<_>>();
-    let mut expected_models = vec![
-        previous_model, // First turn.
-        previous_model, // Old-model compaction attempt and retries.
-        previous_model,
-        previous_model,
-        selected_model, // Selected-model compaction attempt and retries.
-        selected_model,
-        selected_model,
-    ];
+    let mut expected_models = vec![previous_model];
+
+    if unsupported_previous_model {
+        expected_models.push(previous_model);
+    } else {
+        expected_models.extend(vec![previous_model; 3]);
+    }
+
+    expected_models.extend(vec![selected_model; 3]);
     if selected_model_failures < 3 {
         expected_models.push(selected_model); // Sampling after compaction succeeds.
     }
